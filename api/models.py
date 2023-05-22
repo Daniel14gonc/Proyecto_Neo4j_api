@@ -31,7 +31,37 @@ class UserAuth(Resource):
         except:
             return jsonify({"code": "400", "status": "error"})
         
+    
+class MyAcount(Resource):
+
+    def get(self):
+        try:
+            data = request.headers
+            username = data['username']
+            query = "MATCH (n:User {username: '%s'}) return n"%(username)
+            result = db.run(query).single()
+            subscription = result['n']._properties['Subscription_type']
+
+            return jsonify({"subscription": subscription})
+        except:
+            return jsonify({"code": "400", "status": "error"})
+        
+    def put(self):
+        try:
+            data = request.get_json()
+            username = data['username']
+            sub = data['suscription']
+            query ="MATCH (u:User) WHERE u.username='%s' set u.Subscription_type='%s'"%(username,sub)
+            db.run(query)
+            
+            return jsonify({"code": "200", "status": "updated"})
+        except:
+            return jsonify({"code": "400", "status": "error"})
+
+        
+        
 class WatchedMovie(Resource):
+    
     def get(self,):
         try:
             data = request.headers
@@ -54,6 +84,7 @@ class WatchedMovie(Resource):
             data = request.get_json()
             username = data['username']
             movie = data['title']
+            rating = data['rating']
 
             query = "RETURN EXISTS((:User {username: '%s'})-[:WATCHED]->(:Movie {Title: '%s'}))" % (username, movie)
             result = db.run(query).data()
@@ -67,9 +98,8 @@ class WatchedMovie(Resource):
                     properties += "r.Finished= %s,"%data['finished']
                 if 'liked' in data:
                     properties += "r.Liked= %s,"%data['liked'] 
-                if 'rating' in data:
-                    properties += "r.Rating= %s,"%data['rating']
-                
+                if rating:
+                    properties += "r.Rating= %s,"% float(data['rating'])
                 properties = properties[:-1]
 
                 query = "MATCH (u:User {username: '%s'})-[r:WATCHED]->(m:Movie {Title: '%s'}) SET %s"%(username, movie, properties)
@@ -110,6 +140,15 @@ class User(Resource):
                 return jsonify({"code": "400", "status": "error"})
         except:
             return jsonify({"code": "400", "status": "error"})
+        
+    def delete(self):
+        try:
+            username = request.headers['user']
+            query = "MATCH (u:User {username: '%s'}) DETACH DELETE u"%username
+            db.run(query)
+            return jsonify({"code": "200", "status": "deleted"})
+        except:
+            return jsonify({"code": "400", "status": "error"})
 
 class RandomMovie(Resource):
 
@@ -123,7 +162,7 @@ class RandomMovie(Resource):
         except:
             return jsonify({"code": "400", "status": "error"})
 
-
+# TODO: Esta es la clase donde debemos hacer la recomendacion
 class SuggestedMovie(Resource):
 
     def get(self):
@@ -155,5 +194,18 @@ class Movie(Resource):
             response = {'liked': properties['Liked']}
 
             return jsonify(response)
+        except:
+            return jsonify({"code": "400", "status": "error"})
+
+class AllMovies(Resource):
+    def get(self):
+        try: 
+            query = "MATCH (m:Movie) return m"
+            result = db.run(query)
+            movies = []
+            for record in result:
+                res = record['m']
+                movies.append({"Title": res['Title'], "image": res['link_img'], "link": res['Link_trailer']})
+            return jsonify(movies)
         except:
             return jsonify({"code": "400", "status": "error"})
