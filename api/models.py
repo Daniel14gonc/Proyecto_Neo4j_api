@@ -84,7 +84,6 @@ class WatchedMovie(Resource):
             data = request.get_json()
             username = data['username']
             movie = data['title']
-            rating = data['rating']
 
             query = "RETURN EXISTS((:User {username: '%s'})-[:WATCHED]->(:Movie {Title: '%s'}))" % (username, movie)
             result = db.run(query).data()
@@ -98,7 +97,7 @@ class WatchedMovie(Resource):
                     properties += "r.Finished= %s,"%data['finished']
                 if 'liked' in data:
                     properties += "r.Liked= %s,"%data['liked'] 
-                if rating:
+                if 'rating' in data:
                     properties += "r.Rating= %s,"% float(data['rating'])
                 properties = properties[:-1]
 
