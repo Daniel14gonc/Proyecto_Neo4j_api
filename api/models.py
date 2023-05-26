@@ -97,13 +97,14 @@ class WatchedMovie(Resource):
                 if 'liked' in data:
                     properties += "r.Liked= %s,"%data['liked'] 
                 if 'rating' in data:
-                    properties += "r.Rating= %s,"% float(data['rating'])
+                    if data['rating'] != '':
+                        properties += "r.Rating= %s,"% float(data['rating'])
                 properties = properties[:-1]
 
                 query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) SET %s"%(username, movie, properties)
             else:
                 query = "MATCH (u:USER {Username: '%s'}), (m:MOVIE {Title: '%s'}) MERGE (u) -[r:WATCHED {Finished: false, Liked: false, Last_seen: timestamp()}]-> (m)"%(username, movie)
-            
+
             db.run(query)
             
             return jsonify({"code": "200", "status": "updated"})
@@ -117,11 +118,21 @@ class Admin(Resource):
             query = data['query']
             print(query)
             result = db.run(query)
-            result = result
-            print("Resultado: ",result)
-            return jsonify(result)
-        except:
-            return jsonify({"code": "400", "status": "error"})
+            response = str(result.consume().counters)
+            response = eval(response)
+            if len(response) == 0:
+                response = {"message": "no changes made"}
+            print(result)
+            print(result.consume().counters)
+
+            response = dict(response)
+
+            return jsonify({"message": str(response)[1:-1]})
+        except Exception as e:
+            try:
+                return jsonify({"message": e.message})
+            except:
+                return jsonify({"message": "error"})
 
 class User(Resource):
 
@@ -189,22 +200,29 @@ class SuggestedMovie(Resource):
 class Movie(Resource):
 
     def get(self):
-        try:
-            data = request.headers
-            username = data['username']
-            movie = data['movie']
+        # try:
+        data = request.headers
+        username = data['username']
+        movie = data['movie']
 
-            query = "MATCH (u:USER {username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) return m, r"%(username, movie)
-            
-            result = db.run(query)
-            record = result.single()
+        print(username, movie)
+
+        query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) return m, r"%(username, movie)
+        
+        result = db.run(query)
+        record = result.single()
+        if 'r' in record:
             relation = record['r']
             properties = relation._properties
-            response = {'liked': properties['Liked']}
-
-            return jsonify(response)
-        except:
-            return jsonify({"code": "400", "status": "error"})
+            if "Rating" not in properties:
+                properties['Rating'] = ""
+            response = {'liked': properties['Liked'],'rating': properties['Rating'],'started':True}
+        else:
+            response = {'liked': False,'rating': "",'started':False}
+        
+        return jsonify(response)
+        # except:
+        #     return jsonify({"code": "400", "status": "error"})
 
 class AllMovies(Resource):
     def get(self):
