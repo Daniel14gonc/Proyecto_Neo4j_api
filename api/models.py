@@ -11,25 +11,75 @@ from random import randint
 import re
 from db import graph as db
 from datetime import date
+from sklearn.neighbors import KNeighborsClassifier, KDTree
+import numpy as np
+import asyncio
+from math import log2
+from sklearn.preprocessing import OneHotEncoder
+
+model = KNeighborsClassifier(n_neighbors=3)
+user_dictionary = {}
+encoder = None
+
+def train_KNN():
+    query = """
+        MATCH (u:USER)-[:WATCHED]->(m:MOVIE)-[:BELONGS_TO_SAGA]->(s:SAGA)
+        WITH u, s, COUNT(*) AS peliculasSaga
+        ORDER BY u, peliculasSaga DESC
+        WITH u, COLLECT({saga: s, peliculasSaga: peliculasSaga})[0] AS sagaMasVista
+        MATCH (u)-[:WATCHED]->(m)-[:OF_THE_GENRE]->(g:GENERO)
+        WITH u, sagaMasVista, g, COUNT(*) AS peliculasGenero
+        ORDER BY u, peliculasGenero DESC
+        WITH u, sagaMasVista, COLLECT({genero: g, peliculasGenero: peliculasGenero})[0] AS generoMasVisto
+        RETURN u.Username AS usuario, sagaMasVista.saga.Name AS saga, sagaMasVista.peliculasSaga AS peliculasSaga,
+            generoMasVisto.genero.Tipo AS generoMasVisto, generoMasVisto.peliculasGenero AS peliculasGenero
+    """
+    result = db.run(query)
+    arreglo = []
+    i = 0
+    for record in result:
+        observation = []
+        j = 0
+        for caracteristic in record:
+            if j == 0:
+                global user_dictionary
+                user_dictionary[i] = caracteristic
+            if j == 2 or j == 4:
+                caracteristic = int(caracteristic)
+            observation.append(caracteristic)
+            j += 1
+        arreglo.append(observation)
+        i += 1
+
+    arreglo = np.array(arreglo)
+    global encoder
+    encoder = OneHotEncoder(handle_unknown='ignore')
+    X_encoded = encoder.fit_transform(arreglo).toarray()
+    # print(user_dictionary)
+    global model
+    model = KDTree(X_encoded)
+
+train_KNN()
 
 class UserAuth(Resource):
     
     def post(self):
-        try:
-            data = request.get_json()
-            username = data['username']
-            password = data['password']
-            query = "MATCH (n:USER {Username: '%s'}) return n"%(username)
+        # try:
+        data = request.get_json()
+        username = data['username']
+        password = data['password']
+        query = "MATCH (n:USER {Username: '%s'}) return n"%(username)
 
-            result = db.run(query)
-            equal_password = False
-            for record in result:
-                user_node = record["n"]
-                equal_password = user_node['Password'] == password
-            
-            return jsonify({"code": "200", "status": "authenticated"}) if equal_password else jsonify({"code": "401", "status": "error"})
-        except:
-            return jsonify({"code": "400", "status": "error"})
+        result = db.run(query)
+        equal_password = False
+        
+        for record in result:
+            user_node = record["n"]
+            equal_password = user_node['Password'] == password
+        train_KNN()
+        return jsonify({"code": "200", "status": "authenticated"}) if equal_password else jsonify({"code": "401", "status": "error"})
+        # except:
+        #     return jsonify({"code": "400", "status": "error"})
         
     
 class MyAccount(Resource):
@@ -79,37 +129,36 @@ class WatchedMovie(Resource):
             return jsonify({"code": "400", "status": "error"})
         
     def put(self): 
-        try:
-            data = request.get_json()
-            username = data['username']
-            movie = data['title']
+        # try:
+        data = request.get_json()
+        username = data['username']
+        movie = data['title']
 
-            query = "RETURN EXISTS((:USER {Username: '%s'})-[:WATCHED]->(:MOVIE {Title: '%s'}))" % (username, movie)
-            result = db.run(query).data()
-            relationship_exists = False
-            for keys in result[0]:
-                relationship_exists = result[0][keys]
+        query = "RETURN EXISTS((:USER {Username: '%s'})-[:WATCHED]->(:MOVIE {Title: '%s'}))" % (username, movie)
+        result = db.run(query).data()
+        relationship_exists = False
+        for keys in result[0]:
+            relationship_exists = result[0][keys]
 
-            if relationship_exists:
-                properties = "r.Last_seen= timestamp(),"
-                if 'finished' in data:
-                    properties += "r.Finished= %s,"%data['finished']
-                if 'liked' in data:
-                    properties += "r.Liked= %s,"%data['liked'] 
-                if 'rating' in data:
-                    if data['rating'] != '':
-                        properties += "r.Rating= %s,"% float(data['rating'])
-                properties = properties[:-1]
+        if relationship_exists:
+            properties = "r.Last_seen= timestamp(),"
+            if 'finished' in data:
+                properties += "r.Finished= %s,"%data['finished']
+            if 'liked' in data:
+                properties += "r.Liked= %s,"%data['liked'] 
+            if 'rating' in data:
+                if data['rating'] != '':
+                    properties += "r.Rating= %s,"% float(data['rating'])
+            properties = properties[:-1]
 
-                query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) SET %s"%(username, movie, properties)
-            else:
-                query = "MATCH (u:USER {Username: '%s'}), (m:MOVIE {Title: '%s'}) MERGE (u) -[r:WATCHED {Finished: false, Liked: false, Last_seen: timestamp()}]-> (m)"%(username, movie)
-
-            db.run(query)
-            
-            return jsonify({"code": "200", "status": "updated"})
-        except:
-            return jsonify({"code": "400", "status": "error"})
+            query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) SET %s"%(username, movie, properties)
+        else:
+            query = "MATCH (u:USER {Username: '%s'}), (m:MOVIE {Title: '%s'}) MERGE (u) -[r:WATCHED {Finished: false, Liked: false, Last_seen: timestamp()}]-> (m)"%(username, movie)
+        db.run(query)
+        
+        return jsonify({"code": "200", "status": "updated"})
+        # except:
+        #     return jsonify({"code": "400", "status": "error"})
 class Admin(Resource):
     
     def get(self):
@@ -186,16 +235,104 @@ class RandomMovie(Resource):
 class SuggestedMovie(Resource):
 
     def get(self):
-        try: 
-            query = "MATCH (m:MOVIE) return m"
-            result = db.run(query)
-            movies = []
+        
+        # try: 
+            username = request.headers['user']
+            
+            query_tabla = """
+            MATCH (u:USER {Username:'%s'})-[:WATCHED]->(m:MOVIE)-[:BELONGS_TO_SAGA]->(s:SAGA)
+            WITH u, s, COUNT(*) AS peliculasSaga
+            ORDER BY u, peliculasSaga DESC
+            WITH u, COLLECT({saga: s, peliculasSaga: peliculasSaga})[0] AS sagaMasVista
+            MATCH (u)-[:WATCHED]->(m)-[:OF_THE_GENRE]->(g:GENERO)
+            WITH u, sagaMasVista, g, COUNT(*) AS peliculasGenero
+            ORDER BY u, peliculasGenero DESC
+            WITH u, sagaMasVista, COLLECT({genero: g, peliculasGenero: peliculasGenero})[0] AS generoMasVisto
+            RETURN u.Username AS usuario, sagaMasVista.saga.Name AS saga, sagaMasVista.peliculasSaga AS peliculasSaga,
+                generoMasVisto.genero.Tipo AS generoMasVisto, generoMasVisto.peliculasGenero AS peliculasGenero
+            """%username
+            
+            result = db.run(query_tabla)
+            records = []
             for record in result:
-                res = record['m']
-                movies.append({"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']})
-            return jsonify(movies)
-        except:
-            return jsonify({"code": "400", "status": "error"})
+                records.append(str(record['usuario']))
+                records.append(str(record['saga']))
+                records.append(record['peliculasSaga'])
+                records.append(str(record['generoMasVisto']))
+                records.append(record['peliculasGenero'])
+                print("redords:",record)
+            
+            if records:
+                print(user_dictionary)
+                global encoder
+                print(records)
+                X_encoded = encoder.transform([records]).toarray()
+                distance, index = model.query(X=X_encoded, k=4, sort_results=True)
+                distance = distance[0][1:]
+                index = index[0][1:]
+                users_list = [user_dictionary[i] for i in index]
+
+                query_array =["""MATCH (u:USER {Username: '%s'})-[w:WATCHED]->(m1:MOVIE)
+                                with m1 AS MovieTitle, AVG(w.Rating) AS AverageRating
+                                order by AverageRating
+                                limit 1
+                                MATCH (MovieTitle)<-[:ACTED_IN]-(a:ACTOR)
+                                MATCH (a)-[:ACTED_IN]->(m :MOVIE)
+                                MATCH (u:USER)-[w:WATCHED]->(m:MOVIE)
+                                with m , AVG(w.Rating) AS AverageRating2
+                                order by AverageRating2
+                                LIMIT 2
+                                RETURN m""",
+                                """MATCH (u:USER {Username: '%s'})-[w:WATCHED]->(m1:MOVIE)
+                                with m1 AS MovieTitle, AVG(w.Rating) AS AverageRating
+                                order by AverageRating
+                                limit 1
+                                MATCH (MovieTitle)-[:OF_THE_GENRE]->(a:GENERO)
+                                MATCH (a)<-[:OF_THE_GENRE]-(m :MOVIE)
+                                MATCH (u:USER)-[w:WATCHED]->(m:MOVIE)
+                                with m , AVG(w.Rating) AS AverageRating2
+                                order by AverageRating2
+                                LIMIT 2
+                                RETURN m""",
+                                """MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE)
+                                WITH m
+                                ORDER BY r.Start_date DESC
+                                LIMIT 2
+                                return m"""]
+
+
+                query = "MATCH (u:USER {Username: '%s'})-[:WATCHED]->(m:MOVIE) return m"
+                movies = {}
+                contador = 0
+                for user in users_list:
+                    print("usuario:",user)
+                    result = db.run(query_array[contador]%user)
+                    contador+=1
+                    for record in result:
+                        res = record['m']
+                        movies[res['Title']] = {"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']}
+                response = []
+                for movie in movies:
+                    response.append(movies[movie])
+
+                return jsonify(response)
+            else:
+                query_count_movies = "MATCH (u:USER {Username:'%s'})-[:WATCHED]->(m:MOVIE) RETURN count(m) as c"%username
+                result = db.run(query_count_movies)
+                result = result.single()['c']
+                print(result)
+                
+                
+                query = "MATCH (m:MOVIE) return m"
+                result = db.run(query)
+                movies = []
+                
+                for record in result:
+                    res = record['m']
+                    movies.append({"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']})
+                return jsonify(movies)
+        # except:
+        #     return jsonify({"code": "400", "status": "error"})
 
 class Movie(Resource):
 
@@ -205,7 +342,7 @@ class Movie(Resource):
         username = data['username']
         movie = data['movie']
 
-        print(username, movie)
+        
 
         query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) return m, r"%(username, movie)
         
