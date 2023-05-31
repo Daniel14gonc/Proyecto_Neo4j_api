@@ -16,12 +16,21 @@ import numpy as np
 import asyncio
 from math import log2
 from sklearn.preprocessing import OneHotEncoder
+from neo4j import GraphDatabase
 
 model = KNeighborsClassifier(n_neighbors=3)
 user_dictionary = {}
 encoder = None
 
+
+# def connect():
+#     driver = GraphDatabase.driver('neo4j+s://cb6521e8.databases.neo4j.io:7687', auth=('neo4j', 'jvI0Qw1-M8uRNzI42LrWaQI36hUUOoKKJPs09bKUpYU'))
+#     session = driver.session()
+#     return driver.session(database="neo4j")
+
+
 def train_KNN():
+    ()
     query = """
         MATCH (u:USER)-[:WATCHED]->(m:MOVIE)-[:BELONGS_TO_SAGA]->(s:SAGA)
         WITH u, s, COUNT(*) AS peliculasSaga
@@ -58,28 +67,31 @@ def train_KNN():
     # print(user_dictionary)
     global model
     model = KDTree(X_encoded)
+    
 
 train_KNN()
 
 class UserAuth(Resource):
     
     def post(self):
-        # try:
-        data = request.get_json()
-        username = data['username']
-        password = data['password']
-        query = "MATCH (n:USER {Username: '%s'}) return n"%(username)
-
-        result = db.run(query)
-        equal_password = False
         
-        for record in result:
-            user_node = record["n"]
-            equal_password = user_node['Password'] == password
-        train_KNN()
-        return jsonify({"code": "200", "status": "authenticated"}) if equal_password else jsonify({"code": "401", "status": "error"})
-        # except:
-        #     return jsonify({"code": "400", "status": "error"})
+        try:
+            data = request.get_json()
+            username = data['username']
+            password = data['password']
+            query = "MATCH (n:USER {Username: '%s'}) return n"%(username)
+
+            result = db.run(query)
+            equal_password = False
+            
+            for record in result:
+                user_node = record["n"]
+                equal_password = user_node['Password'] == password
+            train_KNN()
+            return jsonify({"code": "200", "status": "authenticated"}) if equal_password else jsonify({"code": "401", "status": "error"})
+        except:
+            return jsonify({"code": "400", "status": "error"})
+        
         
     
 class MyAccount(Resource):
@@ -91,13 +103,14 @@ class MyAccount(Resource):
             query = "MATCH (n:USER {Username: '%s'}) return n"%(username)
             result = db.run(query).single()
             subscription = result['n']._properties['Subscription_type']
-
+            
             return jsonify({"subscription": subscription})
         except:
             return jsonify({"code": "400", "status": "error"})
         
     def put(self):
         try:
+            ()
             data = request.get_json()
             username = data['username']
             sub = data['suscription']
@@ -124,41 +137,43 @@ class WatchedMovie(Resource):
             for record in result:
                 res = record['m']
                 movies.append({"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']})
+            
             return jsonify(movies)
+        except:
+            return jsonify([])
+        
+    def put(self): 
+        try:
+            data = request.get_json()
+            username = data['username']
+            movie = data['title']
+
+            query = "RETURN EXISTS((:USER {Username: '%s'})-[:WATCHED]->(:MOVIE {Title: '%s'}))" % (username, movie)
+            result = db.run(query).data()
+            relationship_exists = False
+            for keys in result[0]:
+                relationship_exists = result[0][keys]
+
+            if relationship_exists:
+                properties = "r.Last_seen= timestamp(),"
+                if 'finished' in data:
+                    properties += "r.Finished= %s,"%data['finished']
+                if 'liked' in data:
+                    properties += "r.Liked= %s,"%data['liked'] 
+                if 'rating' in data:
+                    if data['rating'] != '':
+                        properties += "r.Rating= %s,"% float(data['rating'])
+                properties = properties[:-1]
+
+                query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) SET %s"%(username, movie, properties)
+            else:
+                query = "MATCH (u:USER {Username: '%s'}), (m:MOVIE {Title: '%s'}) MERGE (u) -[r:WATCHED {Finished: false, Liked: false, Last_seen: timestamp()}]-> (m)"%(username, movie)
+            db.run(query)
+        
+            return jsonify({"code": "200", "status": "updated"})
         except:
             return jsonify({"code": "400", "status": "error"})
         
-    def put(self): 
-        # try:
-        data = request.get_json()
-        username = data['username']
-        movie = data['title']
-
-        query = "RETURN EXISTS((:USER {Username: '%s'})-[:WATCHED]->(:MOVIE {Title: '%s'}))" % (username, movie)
-        result = db.run(query).data()
-        relationship_exists = False
-        for keys in result[0]:
-            relationship_exists = result[0][keys]
-
-        if relationship_exists:
-            properties = "r.Last_seen= timestamp(),"
-            if 'finished' in data:
-                properties += "r.Finished= %s,"%data['finished']
-            if 'liked' in data:
-                properties += "r.Liked= %s,"%data['liked'] 
-            if 'rating' in data:
-                if data['rating'] != '':
-                    properties += "r.Rating= %s,"% float(data['rating'])
-            properties = properties[:-1]
-
-            query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) SET %s"%(username, movie, properties)
-        else:
-            query = "MATCH (u:USER {Username: '%s'}), (m:MOVIE {Title: '%s'}) MERGE (u) -[r:WATCHED {Finished: false, Liked: false, Last_seen: timestamp()}]-> (m)"%(username, movie)
-        db.run(query)
-        
-        return jsonify({"code": "200", "status": "updated"})
-        # except:
-        #     return jsonify({"code": "400", "status": "error"})
 class Admin(Resource):
     
     def get(self):
@@ -175,7 +190,7 @@ class Admin(Resource):
             print(result.consume().counters)
 
             response = dict(response)
-
+            
             return jsonify({"message": str(response)[1:-1]})
         except Exception as e:
             try:
@@ -202,7 +217,7 @@ class User(Resource):
             
             query = "MERGE (u:USER {Username: '%s', Password: '%s', Age: %s, Registration_date: datetime(), Subscription_type: '%s'})"%(username, password, age, subscription)
             result = db.run(query)
-
+            
             if result.consume().counters.nodes_created > 0:
                 return jsonify({"code": "200", "status": "registered"})
             else:
@@ -215,6 +230,7 @@ class User(Resource):
             username = request.headers['user']
             query = "MATCH (u:USER {Username: '%s'}) DETACH DELETE u"%username
             db.run(query)
+            
             return jsonify({"code": "200", "status": "deleted"})
         except:
             return jsonify({"code": "400", "status": "error"})
@@ -227,6 +243,7 @@ class RandomMovie(Resource):
             result = db.run(query)
             result = result.data()[0]['m']
             response = {"Title": result['Title'], "image": result['Link_img'], "link": result['Link_trailer']}
+            
             return jsonify(response)
         except:
             return jsonify({"code": "400", "status": "error"})
@@ -236,7 +253,7 @@ class SuggestedMovie(Resource):
 
     def get(self):
         
-        # try: 
+        try: 
             username = request.headers['user']
             
             query_tabla = """
@@ -314,7 +331,7 @@ class SuggestedMovie(Resource):
                 response = []
                 for movie in movies:
                     response.append(movies[movie])
-
+                
                 return jsonify(response)
             else:
                 query_count_movies = "MATCH (u:USER {Username:'%s'})-[:WATCHED]->(m:MOVIE) RETURN count(m) as c"%username
@@ -330,37 +347,38 @@ class SuggestedMovie(Resource):
                 for record in result:
                     res = record['m']
                     movies.append({"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']})
+                
                 return jsonify(movies)
-        # except:
-        #     return jsonify({"code": "400", "status": "error"})
+        except:
+            return jsonify([])
 
 class Movie(Resource):
 
     def get(self):
-        # try:
-        data = request.headers
-        username = data['username']
-        movie = data['movie']
-
-        
-
-        query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) return m, r"%(username, movie)
-        
-        result = db.run(query)
-        record = result.single()
-        
         try:
-            relation = record['r']
-            properties = relation._properties
-            if "Rating" not in properties:
-                properties['Rating'] = ""
-            response = {'liked': properties['Liked'],'rating': properties['Rating'],'started':True}
+            data = request.headers
+            username = data['username']
+            movie = data['movie']
+
+            
+
+            query = "MATCH (u:USER {Username: '%s'})-[r:WATCHED]->(m:MOVIE {Title: '%s'}) return m, r"%(username, movie)
+            
+            result = db.run(query)
+            record = result.single()
+            
+            try:
+                relation = record['r']
+                properties = relation._properties
+                if "Rating" not in properties:
+                    properties['Rating'] = ""
+                response = {'liked': properties['Liked'],'rating': properties['Rating'],'started':True}
+            except:
+                response = {'liked': False,'rating': "",'started':False}
+            
+            return jsonify(response)
         except:
-            response = {'liked': False,'rating': "",'started':False}
-        
-        return jsonify(response)
-        # except:
-        #     return jsonify({"code": "400", "status": "error"})
+            return jsonify({"code": "400", "status": "error"})
 
 class AllMovies(Resource):
     def get(self):
@@ -371,9 +389,10 @@ class AllMovies(Resource):
             for record in result:
                 res = record['m']
                 movies.append({"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']})
+            
             return jsonify(movies)
         except:
-            return jsonify({"code": "400", "status": "error"})
+            return jsonify([])
         
 class Saga(Resource):
 
@@ -385,42 +404,44 @@ class Saga(Resource):
             for record in result:
                 res = record['s']
                 sagas.append({"name": res['Name'], "image": res['saga_image']})
+            
             return jsonify(sagas)
         except:
-            return jsonify({"code": "400", "status": "error"})
+            return jsonify([])
 
 
 
 
 class SagaActors(Resource):
     def get(self):
-        # try:
-        saga = request.headers['saga']
-        query = "MATCH (a:ACTOR)-[:ACTED_IN]->(m:MOVIE)-[:BELONGS_TO_SAGA]->(s:SAGA {Name: '%s'}) return a.Actor_name"%saga
-        result = db.run(query)
-        actors = []
-        for record in result:
-            print(record['a.Actor_name'])
-            name = record['a.Actor_name']
-            actors.append(name)
-        return jsonify(actors)
-        # except:
-        #     return jsonify({"code": "400", "status": "error"})
-        
-class SagaMovies(Resource):
-
-    def get(self):
         try:
-            query = "MATCH (s:SAGA) return s"
+            saga = request.headers['saga']
+            query = "MATCH (a:ACTOR)-[:ACTED_IN]->(m:MOVIE)-[:BELONGS_TO_SAGA]->(s:SAGA {Name: '%s'}) return a.Actor_name"%saga
             result = db.run(query)
-            sagas = []
+            actors = []
             for record in result:
-                res = record['s']
-                sagas.append({"name": res['Name'], "image": res['saga_image']})
-            print(sagas)
-            return jsonify(sagas)
+                print(record['a.Actor_name'])
+                name = record['a.Actor_name']
+                actors.append(name)
+            
+            return jsonify(actors)
         except:
-            return jsonify({"code": "400", "status": "error"})
+            return jsonify([])
+        
+# class SagaMovies(Resource):
+
+#     def get(self):
+#         try:
+#             query = "MATCH (s:SAGA) return s"
+#             result = db.run(query)
+#             sagas = []
+#             for record in result:
+#                 res = record['s']
+#                 sagas.append({"name": res['Name'], "image": res['saga_image']})
+#             print(sagas)
+#             return jsonify(sagas)
+#         except:
+#             return jsonify([])
     
         
 class SagaMovies(Resource):
@@ -435,9 +456,10 @@ class SagaMovies(Resource):
             for record in result:
                 res = record['m']
                 movies.append({"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']})
+            
             return jsonify(movies)
         except:
-            return jsonify({"code": "400", "status": "error"})
+            return jsonify([])
 
 class FanOf(Resource):
     def get(self):
@@ -451,47 +473,48 @@ class FanOf(Resource):
             relationship_exists = False
             for keys in result[0]:
                 relationship_exists = result[0][keys]
-
+            
             return jsonify({"exists": relationship_exists})
         except:
             return jsonify({"code": "400", "status": "error"})
 
     def put(self):
-        # try:
-        data = request.get_json()
-        user = data['user']
-        saga = data['saga']
+        try:
+            data = request.get_json()
+            user = data['user']
+            saga = data['saga']
 
-        query = ''
+            query = ''
 
-        query = "RETURN EXISTS((:USER {Username: '%s'})-[:FAN_OF]->(:SAGA {Name: '%s'}))" %(user, saga)
-        result = db.run(query).data()
-        relationship_exists = False
-        for keys in result[0]:
-            relationship_exists = result[0][keys]
-        
-        if relationship_exists:
-            items = ''
-            if 'movie' in data or 'character' in data:
-                if 'movie' in data:
-                    items += "r.favorite_movie= '%s',"%data['movie']
-                if 'character' in data:
-                    items += "r.favorite_character= '%s',"%data['character']
-                items = items[:-1]
-                query = "MATCH (u:USER {Username: '%s'})-[r:FAN_OF]->(s:SAGA {Name: '%s'}) SET %s"%(user, saga, items)
+            query = "RETURN EXISTS((:USER {Username: '%s'})-[:FAN_OF]->(:SAGA {Name: '%s'}))" %(user, saga)
+            result = db.run(query).data()
+            relationship_exists = False
+            for keys in result[0]:
+                relationship_exists = result[0][keys]
+            
+            if relationship_exists:
+                items = ''
+                if 'movie' in data or 'character' in data:
+                    if 'movie' in data:
+                        items += "r.favorite_movie= '%s',"%data['movie']
+                    if 'character' in data:
+                        items += "r.favorite_character= '%s',"%data['character']
+                    items = items[:-1]
+                    query = "MATCH (u:USER {Username: '%s'})-[r:FAN_OF]->(s:SAGA {Name: '%s'}) SET %s"%(user, saga, items)
+                    db.run(query)
+                    return jsonify({"code": "200", "status": "updated"})
+
+                query = "MATCH (u:USER {Username: '%s'})-[r:FAN_OF]->(:SAGA {Name: '%s'}) DELETE r"%(user, saga)
                 db.run(query)
-                return jsonify({"code": "200", "status": "updated"})
-
-            query = "MATCH (u:USER {Username: '%s'})-[r:FAN_OF]->(:SAGA {Name: '%s'}) DELETE r"%(user, saga)
+                return jsonify({"code": "200", "status": "deleted"})
+            
+            query = "MATCH (u:USER {Username: '%s'}), (s:SAGA {Name: '%s'}) MERGE (u)-[r:FAN_OF {timestamp: datetime()}]->(s) return r"%(user, saga)
             db.run(query)
-            return jsonify({"code": "200", "status": "deleted"})
+            
+            return jsonify({"code": "200", "status": "created"})
         
-        query = "MATCH (u:USER {Username: '%s'}), (s:SAGA {Name: '%s'}) MERGE (u)-[r:FAN_OF {timestamp: datetime()}]->(s) return r"%(user, saga)
-        db.run(query)
-        return jsonify({"code": "200", "status": "created"})
-        
-        # except:
-        #     return jsonify({"code": "400", "status": "error"})
+        except:
+            return jsonify({"code": "400", "status": "error"})
 
 class LikedMovies(Resource):
     def get(self):
@@ -504,6 +527,7 @@ class LikedMovies(Resource):
             for record in result:
                     res = record['movie']
                     movies.append({"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']})
+            
             return jsonify(movies)
         except:
-            return jsonify({"code": "400", "status": "error"})
+            return jsonify([])
