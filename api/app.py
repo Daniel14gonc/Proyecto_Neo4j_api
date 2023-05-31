@@ -1,5 +1,5 @@
 from flask_restful import Api
-from models import UserAuth, User, RandomMovie , WatchedMovie, SuggestedMovie, Movie, AllMovies, MyAccount, Saga, SagaMovies, FanOf, Admin
+from models import UserAuth, User, RandomMovie , WatchedMovie, SuggestedMovie, Movie, AllMovies, MyAccount, Saga, SagaMovies, FanOf, Admin, SagaActors, LikedMovies
 from flask import Flask
 from flask_cors import CORS
   
@@ -23,6 +23,8 @@ api.add_resource(Saga, '/saga/')
 api.add_resource(SagaMovies, '/saga-movies/')
 api.add_resource(Admin, '/admin/')
 api.add_resource(FanOf, '/fan-of/')
+api.add_resource(SagaActors, '/saga-actors/')
+api.add_resource(LikedMovies, '/liked-movies/')
 # driver function
 if __name__ == '__main__':
   

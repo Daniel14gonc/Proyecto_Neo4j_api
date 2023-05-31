@@ -200,7 +200,7 @@ class User(Resource):
             
             current_date = date.today()
             
-            query = "MERGE (u:USER {Username: '%s', Password: '%s', Age: %s, Registration_date: date('%s'), Subscription_type: '%s'})"%(username, password, age, str(current_date), subscription)
+            query = "MERGE (u:USER {Username: '%s', Password: '%s', Age: %s, Registration_date: datetime(), Subscription_type: '%s'})"%(username, password, age, subscription)
             result = db.run(query)
 
             if result.consume().counters.nodes_created > 0:
@@ -348,13 +348,14 @@ class Movie(Resource):
         
         result = db.run(query)
         record = result.single()
-        if 'r' in record:
+        
+        try:
             relation = record['r']
             properties = relation._properties
             if "Rating" not in properties:
                 properties['Rating'] = ""
             response = {'liked': properties['Liked'],'rating': properties['Rating'],'started':True}
-        else:
+        except:
             response = {'liked': False,'rating': "",'started':False}
         
         return jsonify(response)
@@ -384,6 +385,39 @@ class Saga(Resource):
             for record in result:
                 res = record['s']
                 sagas.append({"name": res['Name'], "image": res['saga_image']})
+            return jsonify(sagas)
+        except:
+            return jsonify({"code": "400", "status": "error"})
+
+
+
+
+class SagaActors(Resource):
+    def get(self):
+        # try:
+        saga = request.headers['saga']
+        query = "MATCH (a:ACTOR)-[:ACTED_IN]->(m:MOVIE)-[:BELONGS_TO_SAGA]->(s:SAGA {Name: '%s'}) return a.Actor_name"%saga
+        result = db.run(query)
+        actors = []
+        for record in result:
+            print(record['a.Actor_name'])
+            name = record['a.Actor_name']
+            actors.append(name)
+        return jsonify(actors)
+        # except:
+        #     return jsonify({"code": "400", "status": "error"})
+        
+class SagaMovies(Resource):
+
+    def get(self):
+        try:
+            query = "MATCH (s:SAGA) return s"
+            result = db.run(query)
+            sagas = []
+            for record in result:
+                res = record['s']
+                sagas.append({"name": res['Name'], "image": res['saga_image']})
+            print(sagas)
             return jsonify(sagas)
         except:
             return jsonify({"code": "400", "status": "error"})
@@ -423,28 +457,53 @@ class FanOf(Resource):
             return jsonify({"code": "400", "status": "error"})
 
     def put(self):
-        try:
-            data = request.get_json()
-            user = data['user']
-            saga = data['saga']
+        # try:
+        data = request.get_json()
+        user = data['user']
+        saga = data['saga']
 
-            query = "RETURN EXISTS((:USER {Username: '%s'})-[:FAN_OF]->(:SAGA {Name: '%s'}))" %(user, saga)
-            result = db.run(query).data()
-            relationship_exists = False
-            for keys in result[0]:
-                relationship_exists = result[0][keys]
-            
-            if relationship_exists:
-                query = "MATCH (u:USER {Username: '%s'})-[r:FAN_OF]->(:SAGA {Name: '%s'}) DELETE r"%(user, saga)
-                db.run(query)
-                return jsonify({"code": "200", "status": "deleted"})
-            
-            query = "MATCH (u:USER {Username: '%s'}), (s:SAGA {Name: '%s'}) MERGE (u)-[r:FAN_OF {timestamp: datetime()}]->(s) return r"%(user, saga)
-            print(query)
-            db.run(query)
-            return jsonify({"code": "200", "status": "created"})
+        query = ''
+
+        query = "RETURN EXISTS((:USER {Username: '%s'})-[:FAN_OF]->(:SAGA {Name: '%s'}))" %(user, saga)
+        result = db.run(query).data()
+        relationship_exists = False
+        for keys in result[0]:
+            relationship_exists = result[0][keys]
         
+        if relationship_exists:
+            items = ''
+            if 'movie' in data or 'character' in data:
+                if 'movie' in data:
+                    items += "r.favorite_movie= '%s',"%data['movie']
+                if 'character' in data:
+                    items += "r.favorite_character= '%s',"%data['character']
+                items = items[:-1]
+                query = "MATCH (u:USER {Username: '%s'})-[r:FAN_OF]->(s:SAGA {Name: '%s'}) SET %s"%(user, saga, items)
+                db.run(query)
+                return jsonify({"code": "200", "status": "updated"})
+
+            query = "MATCH (u:USER {Username: '%s'})-[r:FAN_OF]->(:SAGA {Name: '%s'}) DELETE r"%(user, saga)
+            db.run(query)
+            return jsonify({"code": "200", "status": "deleted"})
+        
+        query = "MATCH (u:USER {Username: '%s'}), (s:SAGA {Name: '%s'}) MERGE (u)-[r:FAN_OF {timestamp: datetime()}]->(s) return r"%(user, saga)
+        db.run(query)
+        return jsonify({"code": "200", "status": "created"})
+        
+        # except:
+        #     return jsonify({"code": "400", "status": "error"})
+
+class LikedMovies(Resource):
+    def get(self):
+        try:
+            data = request.headers
+            user = data['user']
+            query = "MATCH (:USER {Username:'%s'})-[w:WATCHED]->(movie:MOVIE) WHERE w.Liked = true RETURN movie"%user
+            movies = []
+            result = db.run(query)
+            for record in result:
+                    res = record['movie']
+                    movies.append({"Title": res['Title'], "image": res['Link_img'], "link": res['Link_trailer']})
+            return jsonify(movies)
         except:
             return jsonify({"code": "400", "status": "error"})
-
-
